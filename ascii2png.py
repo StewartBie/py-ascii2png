@@ -24,6 +24,8 @@ import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import subprocess
+
 import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 from matplotlib.patches import Rectangle
@@ -570,6 +572,53 @@ DIAGRAM_TEXT = r"""
 #  入口
 # ═══════════════════════════════════════════════════════════════
 
+_FONT_CANDIDATES = [
+    # Linux — Noto CJK (Arch / Ubuntu / Debian / Fedora)
+    Path("/usr/share/fonts/noto-cjk/NotoSansCJK-Medium.ttc"),
+    Path("/usr/share/fonts/noto/NotoSansCJK-Medium.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Medium.ttc"),
+    Path("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Medium.ttc"),
+    # Linux — WenQuanYi
+    Path("/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc"),
+    Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+    # macOS (Homebrew)
+    Path("/usr/local/share/fonts/noto-sans-cjk/NotoSansCJK-Medium.ttc"),
+    Path("/opt/homebrew/share/fonts/noto-sans-cjk/NotoSansCJK-Medium.ttc"),
+    # ~/.local/share/fonts (手动安装)
+    Path.home() / ".local/share/fonts/NotoSansCJK-Medium.ttc",
+    # Windows / WSL
+    Path("/mnt/c/Windows/Fonts/msyh.ttc"),       # Microsoft YaHei
+    Path("/mnt/c/Windows/Fonts/simsun.ttc"),      # SimSun
+]
+
+
+def _find_cjk_font() -> Path:
+    """在系统中自动搜索一个可用的中文字体。"""
+    for path in _FONT_CANDIDATES:
+        if path.exists():
+            return path
+    # Linux: 用 fontconfig 匹配任意中文字体
+    try:
+        result = subprocess.run(
+            ["fc-match", "-f", "%{file}", "sans-serif"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            p = Path(result.stdout.strip())
+            if p.exists():
+                return p
+    except Exception:
+        pass
+    raise FileNotFoundError(
+        "找不到中文字体。请安装一个 CJK 字体，或通过 --font 参数指定路径。\n"
+        "  Arch Linux:       sudo pacman -S noto-fonts-cjk\n"
+        "  Ubuntu / Debian:  sudo apt install fonts-noto-cjk\n"
+        "  Fedora:           sudo dnf install google-noto-cjk-fonts\n"
+        "  macOS:            brew install font-noto-sans-cjk"
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="ASCII 字符画 → matplotlib 矢量图")
     ap.add_argument("--out", type=Path,
@@ -581,25 +630,24 @@ def main() -> None:
     ap.add_argument("--filename", type=str,
                     default="architecture-overview-flow.png",
                     help="输出文件名，默认 architecture-overview-flow.png")
-    ap.add_argument("--font", type=Path,
-                    default=Path("/usr/share/fonts/noto-cjk/NotoSansCJK-Medium.ttc"))
+    ap.add_argument("--font", type=Path, default=None,
+                    help="字体路径，不指定则自动检测")
     ap.add_argument("--font-size", type=int, default=14)
     ap.add_argument("--dpi", type=int, default=200)
     args = ap.parse_args()
 
     out_path = args.out if args.out else args.out_dir / args.filename
 
-    if not args.font.exists():
-        raise FileNotFoundError(
-            f"找不到字体: {args.font}\n请安装 noto-fonts-cjk")
+    font_path = args.font if args.font else _find_cjk_font()
 
     roots, arrows, ext_texts, gw, gh = parse_diagram(DIAGRAM_TEXT)
     ext_right = sum(1 for e in ext_texts if e.side == 'right')
     print(f"解析结果: {len(roots)} 顶层方框, {len(arrows)} 箭头, "
           f"{len(ext_texts)} 框外文字(R:{ext_right}), 网格 {gw}×{gh}")
+    print(f"字体: {font_path}")
 
     render_diagram(roots, arrows, ext_texts, gw, gh,
-                 args.font, args.font_size, args.dpi, out_path)
+                 font_path, args.font_size, args.dpi, out_path)
 
 
 if __name__ == "__main__":
